@@ -1,1 +1,1 @@
-# blog-article-draft
+# blog-article
