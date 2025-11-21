@@ -1,0 +1,315 @@
+## 자주 쓰는 서버 구조와 설계 패턴
+설계 패턴은 한마디로 선배 개발자들의 피와 땀이라고 설명할 수 있다
+
+### MVC 패턴
+MVC는 Model-View-Controller의 약자로 애플리케이션을 3가지 역할로 나눈 패턴  
+
++ Model
+    - 역할 : 데이터와 비즈니스 로직
+    - 책임 : 무엇을 할 것인가
+    - 위스키 정보 저장, 평점 계산
++ View
+    - 역할 : 사용자에게 보여주는 것
+    - 책임 : 어떻게 보여줄 것인가
+    - JSON 응답, HTML 페이지
++ Controller
+    - Model과 View를 연결
+    - 사용자 요청을 누가 처리할지 결정
+    - /whiskey 요청 받아서 적절한 Service 호출
++ MVC 패턴의 핵심
+    - 비즈니스 로직을 처리하는 모델과 결과를 생성하는 뷰를 분리
+    - 애플리케이션의 흐름 제어나 사용자의 요청 처리는 컨트롤러에 집중
+
+### 계층형 아키텍처
+레이어드 아키텍처라고 부르기도 한다  
+수평적으로 계층을 나눈 설계 패턴
+
++ 계층 구조 (위에서 아래로)
+    - Presentaion Layer (표현 계층)
+        + Controller
+        + HTTP 요청/응답만 처리
+        + 비즈니스 로직 X
+    - Business Layer (비즈니스 계층)
+        + Service
+        + 실제 비즈니스 로직 구현
+        + 트랜잭션 관리 (@Transactional)
+    - Persistence Layer (영속 계층)
+        + Repository
+        + DB 접근만 담당
+        + SQL, JPA 쿼리
+    - Domain Layer (도메인 계층)
+        + Entity, VO
+        + 순수한 도메인 객체
++ 중요한 규칙
+    - 상위 레이어만 하위 레이어를 호출 가능
+    - Repository가 Controller를 직접 호출? X
+        + 하위 레이어가 상위 레이어를 직접 호출하게 되면 양방향이 되어 코드의 흐름이 복잡해짐
+    - 각 레이어는 바로 아래의 레이어만 접촉
++ 장점
+    - 레이어별로 테스트 가능
+    - 각 레이어 독립적으로 수정 가능
++ 단점
+    - 간단한 조회도 4개 파일을 거쳐야 함
+
+### DDD 
+레이어드 아키텍처로 개발하다 보면 Service에 모든 로직이 몰린다  
+Entity는 단순히 데이터를 전달하기 위한 역할만 맡는다  
+DDD는 이것을 조금 완화하여 도메인 객체 안에 비즈니스 로직을 넣어보자는 철학이다  
+
++ Entity
+    - 식별자로 구분되는 객체
+    - 생명주기 있음
+    - Whiskey, User
++ Value Object (값 객체)
+    - 식별자 없음, 값으로만 구분
+    - 불변 객체
+    - Money, Email, Rating
++ Aggregate (집합체)
+    - 관련된 Entity + VO를 하나로 묶음
+    - 일관성 경계 정의
+    - 하나의 Root Entity가 대표
++ Repository
+    - Aggregate 단위로 저장/조회
+    - 기술적인 저장소 추상화
+
+```java
+// Entity가 비즈니스 로직 포함
+@Entity
+class Whiskey {  // Aggregate Root
+    private Long id;
+    private Rating rating;  // Value Object
+    private List<Review> reviews;
+    
+    // 도메인 로직은 Entity 안에
+    public void addReview(Review review) {
+        validateReview(review);
+        reviews.add(review);
+        rating = Rating.calculateFrom(reviews);  // 스스로 계산
+    }
+    
+    private void validateReview(Review review) {
+        if (review.getScore() < 0) 
+            throw new InvalidReviewException();
+    }
+}
+
+// Service는 얇아짐
+@Service
+class WhiskeyService {
+    public void addReview(Long id, Review review) {
+        Whiskey whiskey = repo.findById(id);
+        whiskey.addReview(review);  // 위임만 함
+    }
+}
+```
+
++ 비즈니스 로직이 Entity 안에 캡슐화
++ Service는 얇아지고 조율만 담당
++ 도메인 지식이 한곳에 응집
+
+### 마이크로서비스 아키텍처
+마이크로서비스 아키텍처 이하 MSA는 하나의 애플리케이션에 모든 것을 구현한 모놀리식 아키텍처와 다르게 더 작은 단위로 서비스를 분리하고 각 서비스가 연동되는 구조를 말한다
+
++ 모놀리식 아키텍처
+    - 하나의 거대한 애플리케이션
+    - 모든 기능이 하나의 코드베이스에 존재
+    - 하나의 배포 단위
+    - 하나의 데이터베이스
+    - 장점
+        + 빠른 개발에 용이
+        + 트랜잭션 관리가 간단 (@Transactional로 끝)
+        + 디버깅 쉬움 (로그가 한곳에 쌓임)
+        + 배포 간단
+    - 단점
+        + 빌드/배포에 오래 걸림
+        + 부분 장애가 전체 장애로 발전 가능성
+        + 
+    ```java
+    // 모놀리식 - 전부 한 프로젝트에
+    @RestController
+    class WhiskeyController {
+        @Autowired WhiskeyService whiskeyService;
+        @Autowired PaymentService paymentService;  // 같은 앱 안
+        @Autowired ReviewService reviewService;    // 같은 앱 안
+    }
+    ```
++ MSA
+    - 독립적인 작은 서비스들의 집합
+    - 각 서비스는 독립적인 배포, 데이터베이스, 팀, 기술 스택 등
++ 배포 시나리오
+    - 모놀리식
+        + 리뷰 기능 수정 > 전체 앱 재배포 > 모든 기능 일시 중단
+    - MSA
+        + 리뷰 기능 수정 > Review Service만 재배포 > 다른 서비스는 운영 중
++ 장애 시나리오
+    - 모놀리식
+        + 결제 모듈 버그 > 전체 앱 다운 > 위스키 조회도 불가
+    - MSA
+        + 결제 서비스 다운 > 결제만 안됨 > 위스키 조회는 정상적으로 동작
++ 확장 시나리오
+    - 모놀리식
+        + 리뷰 트래픽 폭증 > 전체 앱 인스턴스 증설
+        + 불필요한 다른 부분까지 늘어남 (낭비)
+    - MSA
+        + 리뷰 트래픽 폭증 > Review Service만 증설 (필요한 것만 확장)
+        + 비용 효율적
+
+MSA가 좋아보이지만 구현 복잡도가 높다  
+서비스간 통신은 어떻게 구현?  
+HTTP REST API? gRPC? Message Queue?  
+
+또, 모놀리식에서는 트랜잭션으로 데이터 일관성을 간단하게 처리할 수 있는데  
+MSA에서는 DB가 다르므로 @Transactional로 간단하게 처리할 수가 없다
+
+### 이벤트 기반 아키텍처
+두 시스템 간에 통신할 때, 이벤트를 사용하는 구조  
+이벤트 기반 아키텍처는 다음의 3가지 요소로 이루어진다
+
++ 이벤트 생산자
++ 이벤트 소비자
++ 이벤트 브로커 (또는 라우터)
+
+이벤트 생산자는 이벤트를 생성해서 브로커에 전달하고 브로커는 해당 이벤트를 구독하는 소비자에게 전달한다  
+이벤트 소비자는 이벤트를 받아 정해진 동작을 수행한다  
+
+```java
+// 기존 방식
+// Whiskey Service
+public void purchase(Long id) {
+    paymentService.charge();     // Payment Service 기다림 ⏰
+    reviewService.create();      // Review Service 기다림 ⏰
+    // 전부 성공해야 끝
+}
+
+// 이벤트 기반 아키텍처
+// Whiskey Service
+public void purchase(Long id) {
+    // 이벤트 발행만 하고 끝!
+    eventPublisher.publish(new WhiskeyPurchasedEvent(id, userId));
+    return;  // 바로 응답!
+}
+
+// Payment Service (별도 서비스)
+@EventListener
+public void onWhiskeyPurchased(WhiskeyPurchasedEvent event) {
+    // 이벤트 받아서 처리
+    processPayment(event.getUserId());
+}
+
+// Review Service (별도 서비스)
+@EventListener
+public void onWhiskeyPurchased(WhiskeyPurchasedEvent event) {
+    // 이벤트 받아서 처리
+    createReview(event.getWhiskeyId());
+}
+```
+
++ 장점
+    - 느슨한 결합 (서비스끼리 직접 연결되지 않아도 가능)
+    - 빠른 응답 (기다릴 필요없음)
+    - 장애 격리 (다른 하나가 죽어도 이벤트는 이벤트 큐에 존재)
+    - 확장 쉬움 (새 서비스가 추가되도 기존 코드는 수정필요 X)
++ 단점
+    - 디버깅 어려움 (비동기로 실행되므로 추적이 어려움)
+        + 추적 ID 사용
+        + Zipkin과 같은 서드파티 사용
+    - 이벤트 순서 보장 어려움
+        ```
+        // 10:00:00.000 - 이벤트 발행
+        eventPublisher.publish(event);
+
+        // 10:00:00.001 - Kafka에 저장됨
+        // 10:00:00.500 - Payment Service가 처리 시작
+        // 10:00:01.200 - Review Service가 처리 시작 (더 느림)
+        // 10:00:05.000 - Notification Service가 처리 시작 (큐 밀려서)
+
+        [10:00:00.000] 구매 시작
+        [10:00:00.001] 이벤트 발행 완료
+        [10:00:01.200] 리뷰 생성 시작  // ?? 결제는?
+        [10:00:00.500] 결제 처리 시작  // 시간 역순!
+        [10:00:05.000] 알림 발송 시작  // 한참 뒤
+        ```
+    - 최종 일관성 (즉시 반영되지 않음)
+
+### CQRS 패턴
+간단하게 한줄로 요약하면 **읽기와 쓰기**를 분리하자  
+
+```java
+// 하나의 모델로 읽기/쓰기 전부
+@Entity
+class Whiskey {
+    private Long id;
+    private String name;
+    private double rating;
+    private List<Review> reviews;  // 조회 시 무거움
+}
+
+// 읽기
+whiskey = repo.findById(id);  // 복잡한 Join
+
+// 쓰기
+whiskey.updateRating(5.0);
+repo.save(whiskey);
+```
+
++ 읽기 쿼리가 복잡해짐 (Join이 많아지면)
++ 쓰기 작업도 느려짐 (무거운 객체)
++ 읽기 최적화가 쓰기 최적화가 아님
+
+이것을 CQRS 모델로 변경하면~  
+
+```java
+// 쓰기용 - 정규화된 DB
+@Entity
+class Whiskey {
+    private Long id;
+    private String name;
+}
+
+@Entity  
+class Review {
+    private Long id;
+    private Long whiskeyId;
+    private int score;
+}
+
+// Command
+public void addReview(Long whiskeyId, int score) {
+    Review review = new Review(whiskeyId, score);
+    reviewRepo.save(review);  // MySQL에 저장
+    
+    // 이벤트 발행
+    eventPublisher.publish(new ReviewAddedEvent(whiskeyId));
+}
+
+// 읽기용 - 비정규화된 DB (Redis, MongoDB)
+class WhiskeyReadModel {
+    private Long id;
+    private String name;
+    private double averageRating;  // 미리 계산됨!
+    private int reviewCount;
+    private List<String> recentReviews;  // 캐시된 데이터
+}
+
+// Query
+public WhiskeyReadModel getWhiskey(Long id) {
+    return readModelRepo.findById(id);  // Redis에서 빠르게 조회
+}
+
+// 이벤트 핸들러로 읽기 모델 업데이트
+@EventListener
+public void onReviewAdded(ReviewAddedEvent event) {
+    WhiskeyReadModel model = readModelRepo.findById(event.getWhiskeyId());
+    model.recalculateRating();  // 평점 재계산
+    readModelRepo.save(model);  // Redis 업데이트
+}
+```
+
++ 장점
+    - 읽기/쓰기 독립적으로 확장
+    - 읽기 성능 확장
+    - 쓰기 성능 최적화 (필요없는 join 없음)
++ 단점
+    - 복잡성 증대 (DB를 2개 관리)
+    - 최종 일관성 (변경되거나 추가된 사항이 읽기에 반영되기까지 시간이 걸림)
+    - 이벤트 처리시 실패하면 데이터 불일치 발생
